@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use speedal_asr::{AsrModel, TimedToken};
 use speedal_audio::TARGET_HZ;
@@ -120,6 +120,47 @@ impl Session {
 
     pub fn turns(&self) -> &[Utterance] {
         &self.turns
+    }
+
+    pub fn last_speaker(&self) -> Option<usize> {
+        self.open
+            .as_ref()
+            .map(|turn| turn.speaker)
+            .or_else(|| self.spans.last().map(|span| span.speaker))
+    }
+
+    /// Save the current (or given) diarized speaker into the gallery.
+    pub fn enroll_speaker(
+        &mut self,
+        name: &str,
+        speaker: Option<usize>,
+    ) -> Result<(usize, speedal_spk::SpeakerRecord)> {
+        let id = speaker
+            .or_else(|| self.last_speaker())
+            .context("no speaker yet — wait until someone is talking")?;
+        let segments: Vec<(u64, u64, usize)> = self
+            .spans
+            .iter()
+            .map(|span| (span.start, span.end, span.speaker))
+            .collect();
+        let clip = speedal_spk::collect_speaker_audio(&self.captured, &segments, id);
+        speedal_spk::require_embeddable(&clip)?;
+        let embedding = self.embedder.embed(&clip)?;
+        let record = self.gallery.enroll(name, &embedding)?.clone();
+        self.gallery.save()?;
+        self.names.insert(id, record.name.clone());
+        self.resolved.insert(id);
+        for turn in &mut self.turns {
+            if turn.speaker == id {
+                turn.name = Some(record.name.clone());
+            }
+        }
+        if let Some(turn) = &mut self.open {
+            if turn.speaker == id {
+                turn.name = Some(record.name.clone());
+            }
+        }
+        Ok((id, record))
     }
 
     /// Offline path: word timestamps + full-file diarization, then align.

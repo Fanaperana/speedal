@@ -2,8 +2,9 @@ use anyhow::Result;
 use serde::Serialize;
 use speedal_audio::{TARGET_HZ, listen_loop, load_wav, permission_hint};
 use speedal_session::{Event, Session, Utterance};
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::Instant;
 
 use crate::{BothArgs, DiarProfile, Format};
@@ -70,9 +71,10 @@ fn run_listen(session: &mut Session, format: Format, seconds: Option<f32>) -> Re
     if format == Format::Text {
         eprintln!("Listening to system playback (speakers/headphones).");
         eprintln!("{}", permission_hint());
-        eprintln!("Ctrl+C to stop.\n");
+        eprintln!("Type `enroll Alice` to save the current speaker. Ctrl+C to stop.\n");
     }
 
+    let commands = stdin_commands();
     let started = Instant::now();
     let mut last_heartbeat = started;
     let mut heard_signal = false;
@@ -88,6 +90,7 @@ fn run_listen(session: &mut Session, format: Format, seconds: Option<f32>) -> Re
         }
         let events = session.feed(samples)?;
         emit_live(&mut out, &events, format, &mut current_speaker)?;
+        drain_enroll_commands(session, &commands, format)?;
         if format == Format::Text && last_heartbeat.elapsed() >= std::time::Duration::from_secs(5) {
             eprintln!("listening… {:.0}s", started.elapsed().as_secs_f32());
             last_heartbeat = Instant::now();
@@ -113,6 +116,82 @@ fn run_listen(session: &mut Session, format: Format, seconds: Option<f32>) -> Re
     }
     out.flush()?;
     Ok(())
+}
+
+fn stdin_commands() -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(line) => {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    rx
+}
+
+fn drain_enroll_commands(
+    session: &mut Session,
+    commands: &mpsc::Receiver<String>,
+    format: Format,
+) -> Result<()> {
+    while let Ok(line) = commands.try_recv() {
+        if let Some((name, speaker)) = parse_enroll_command(&line) {
+            match session.enroll_speaker(&name, speaker) {
+                Ok((id, record)) => {
+                    if format == Format::Text {
+                        eprintln!(
+                            "saved {} as speaker_{} ({} utterance{})",
+                            record.name,
+                            id,
+                            record.utterances,
+                            if record.utterances == 1 { "" } else { "s" }
+                        );
+                    }
+                }
+                Err(error) => eprintln!("enroll failed: {error}"),
+            }
+        } else if !line.trim().is_empty() {
+            eprintln!("unknown command; try `enroll Alice` or `enroll Alice 1`");
+        }
+    }
+    Ok(())
+}
+
+fn parse_enroll_command(line: &str) -> Option<(String, Option<usize>)> {
+    let line = line.trim();
+    let rest = line
+        .strip_prefix("enroll ")
+        .or_else(|| line.strip_prefix("name "))?;
+    let mut parts = rest.split_whitespace();
+    let name = parts.next()?.to_string();
+    let speaker = parts.next().and_then(|id| id.parse().ok());
+    Some((name, speaker))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_enroll_command;
+
+    #[test]
+    fn parses_enroll_current_and_numbered_speakers() {
+        assert_eq!(
+            parse_enroll_command("  enroll Alice  "),
+            Some(("Alice".into(), None))
+        );
+        assert_eq!(
+            parse_enroll_command("enroll Jane 1"),
+            Some(("Jane".into(), Some(1)))
+        );
+        assert_eq!(parse_enroll_command("name Bob"), Some(("Bob".into(), None)));
+        assert_eq!(parse_enroll_command("hello"), None);
+    }
 }
 
 fn emit_file(

@@ -113,9 +113,18 @@ struct EnrollArgs {
     name: String,
 
     /// WAV clip of that speaker, or a meeting to crop with --speaker
-    audio: PathBuf,
+    #[arg(required_unless_present = "listen")]
+    audio: Option<PathBuf>,
 
-    /// Diarized speaker id to enroll from a multi-speaker file
+    /// Capture this computer's playback instead of a file
+    #[arg(short = 'L', long)]
+    listen: bool,
+
+    /// Stop listen mode after this many seconds
+    #[arg(long)]
+    seconds: Option<f32>,
+
+    /// Diarized speaker id to enroll from a multi-speaker file or live capture
     #[arg(short, long)]
     speaker: Option<usize>,
 
