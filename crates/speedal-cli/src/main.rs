@@ -1,7 +1,8 @@
+mod asr;
 mod diar;
 
 use anyhow::{Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Speaker diarization and streaming ASR with NVIDIA Nemotron models.
@@ -15,11 +16,13 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Who spoke when (Nemotron-3 Diarization)
-    Diar(TaskArgs),
+    Diar(DiarArgs),
+    /// What was said (Nemotron Speech Streaming 0.6B)
+    Asr(AsrArgs),
 }
 
-#[derive(clap::Args, Debug)]
-struct TaskArgs {
+#[derive(Args, Debug)]
+struct SharedArgs {
     /// WAV file, or `listen` to capture speakers/headphones
     #[arg(required_unless_present = "listen")]
     audio: Option<PathBuf>,
@@ -32,10 +35,6 @@ struct TaskArgs {
     #[arg(short, long)]
     model: Option<PathBuf>,
 
-    /// NVIDIA diarization latency profile. Files default to offline; listen defaults to low.
-    #[arg(short, long, value_enum)]
-    profile: Option<DiarProfile>,
-
     /// Output format
     #[arg(short, long, value_enum, default_value_t = Format::Text)]
     format: Format,
@@ -43,6 +42,22 @@ struct TaskArgs {
     /// Stop listen mode after this many seconds
     #[arg(long)]
     seconds: Option<f32>,
+}
+
+#[derive(Args, Debug)]
+struct DiarArgs {
+    #[command(flatten)]
+    shared: SharedArgs,
+
+    /// NVIDIA diarization latency profile. Files default to offline; listen defaults to low.
+    #[arg(short, long, value_enum)]
+    profile: Option<DiarProfile>,
+}
+
+#[derive(Args, Debug)]
+struct AsrArgs {
+    #[command(flatten)]
+    shared: SharedArgs,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -85,7 +100,7 @@ impl DiarProfile {
     }
 }
 
-fn wants_listen(args: &TaskArgs) -> bool {
+fn wants_listen(args: &SharedArgs) -> bool {
     args.listen || args.audio.as_deref().is_some_and(|path| path.as_os_str() == "listen")
 }
 
@@ -93,10 +108,16 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Diar(args) => {
-            if !wants_listen(&args) && args.audio.is_none() {
+            if !wants_listen(&args.shared) && args.shared.audio.is_none() {
                 bail!("provide a WAV file or run `speedal diar --listen`");
             }
             diar::run(args)
+        }
+        Command::Asr(args) => {
+            if !wants_listen(&args.shared) && args.shared.audio.is_none() {
+                bail!("provide a WAV file or run `speedal asr --listen`");
+            }
+            asr::run(args)
         }
     }
 }

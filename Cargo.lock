@@ -2653,8 +2653,18 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "speedal-asr",
  "speedal-audio",
  "speedal-diar",
+]
+
+[[package]]
+name = "speedal-asr"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hf-hub",
+ "parakeet-rs",
 ]
 
 [[package]]

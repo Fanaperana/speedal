@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::{DiarProfile, Format, TaskArgs, wants_listen};
+use crate::{DiarArgs, DiarProfile, Format, wants_listen};
 
 #[derive(Serialize)]
 struct JsonOutput<'a> {
@@ -25,16 +25,16 @@ struct JsonSegment {
     speaker: String,
 }
 
-pub fn run(args: TaskArgs) -> Result<()> {
-    let listen = wants_listen(&args);
+pub fn run(args: DiarArgs) -> Result<()> {
+    let listen = wants_listen(&args.shared);
     let profile = args.profile.unwrap_or(if listen {
         DiarProfile::Low
     } else {
         DiarProfile::Offline
     });
 
-    let model_path = speedal_diar::resolve_model(args.model.as_deref())?;
-    if args.format == Format::Text {
+    let model_path = speedal_diar::resolve_model(args.shared.model.as_deref())?;
+    if args.shared.format == Format::Text {
         eprintln!("Model: {}", model_path.display());
     }
 
@@ -43,7 +43,7 @@ pub fn run(args: TaskArgs) -> Result<()> {
         .set_profile(profile.streaming())
         .context("invalid streaming profile")?;
 
-    if args.format == Format::Text {
+    if args.shared.format == Format::Text {
         eprintln!(
             "Latency profile: {} ({:.2}s buffer)",
             profile.as_str(),
@@ -52,12 +52,12 @@ pub fn run(args: TaskArgs) -> Result<()> {
     }
 
     if listen {
-        return run_listen(&mut diarizer, args.format, args.seconds);
+        return run_listen(&mut diarizer, args.shared.format, args.shared.seconds);
     }
 
-    let audio_path = args.audio.expect("WAV path");
+    let audio_path = args.shared.audio.expect("WAV path");
     let wav = load_wav(&audio_path)?;
-    if args.format == Format::Text {
+    if args.shared.format == Format::Text {
         eprintln!(
             "Loaded {:.1}s from {} → {} 16 kHz mono samples",
             wav.duration_secs,
@@ -72,7 +72,7 @@ pub fn run(args: TaskArgs) -> Result<()> {
         .context("diarization failed")?;
     let elapsed = started.elapsed().as_secs_f32();
 
-    match args.format {
+    match args.shared.format {
         Format::Text => print_text(&segments, elapsed),
         Format::Json => print_json(
             &audio_path,

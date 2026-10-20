@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/speedal-audio",
     "crates/speedal-diar",
+    "crates/speedal-asr",
     "crates/speedal-cli",
 ]
 default-members = ["crates/speedal-cli"]
@@ -23,4 +24,5 @@ parakeet-rs = { version = "0.4", features = ["sortformer"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 speedal-audio = { path = "crates/speedal-audio" }
+speedal-asr = { path = "crates/speedal-asr" }
 speedal-diar = { path = "crates/speedal-diar" }

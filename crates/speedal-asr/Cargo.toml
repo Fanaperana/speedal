@@ -1,0 +1,11 @@
+[package]
+name = "speedal-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NVIDIA Nemotron streaming ASR"
+
+[dependencies]
+anyhow.workspace = true
+hf-hub.workspace = true
+parakeet-rs.workspace = true
