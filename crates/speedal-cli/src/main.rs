@@ -1,4 +1,5 @@
 mod asr;
+mod both;
 mod diar;
 
 use anyhow::{Result, bail};
@@ -19,6 +20,8 @@ enum Command {
     Diar(DiarArgs),
     /// What was said (Nemotron Speech Streaming 0.6B)
     Asr(AsrArgs),
+    /// Who said what (ASR and diarization on the same stream)
+    Both(BothArgs),
 }
 
 #[derive(Args, Debug)]
@@ -58,6 +61,37 @@ struct DiarArgs {
 struct AsrArgs {
     #[command(flatten)]
     shared: SharedArgs,
+}
+
+#[derive(Args, Debug)]
+struct BothArgs {
+    /// WAV file, or `listen` to capture speakers/headphones
+    #[arg(required_unless_present = "listen")]
+    audio: Option<PathBuf>,
+
+    /// Capture this computer's playback instead of a file
+    #[arg(short = 'L', long)]
+    listen: bool,
+
+    /// Directory with Nemotron streaming ASR ONNX files
+    #[arg(long)]
+    asr_model: Option<PathBuf>,
+
+    /// Path to Nemotron-3 diarization ONNX
+    #[arg(long)]
+    diar_model: Option<PathBuf>,
+
+    /// NVIDIA diarization latency profile. Files default to offline; listen defaults to low.
+    #[arg(short, long, value_enum)]
+    profile: Option<DiarProfile>,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+
+    /// Stop listen mode after this many seconds
+    #[arg(long)]
+    seconds: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -118,6 +152,17 @@ fn main() -> Result<()> {
                 bail!("provide a WAV file or run `speedal asr --listen`");
             }
             asr::run(args)
+        }
+        Command::Both(args) => {
+            let listen = args.listen
+                || args
+                    .audio
+                    .as_deref()
+                    .is_some_and(|path| path.as_os_str() == "listen");
+            if !listen && args.audio.is_none() {
+                bail!("provide a WAV file or run `speedal both --listen`");
+            }
+            both::run(args)
         }
     }
 }

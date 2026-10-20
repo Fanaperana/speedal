@@ -17,3 +17,4 @@ serde_json.workspace = true
 speedal-asr.workspace = true
 speedal-audio.workspace = true
 speedal-diar.workspace = true
+speedal-session.workspace = true

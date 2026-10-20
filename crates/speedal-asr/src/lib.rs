@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
 use hf_hub::api::sync::Api;
-use parakeet_rs::{ExecutionConfig, Nemotron};
+use parakeet_rs::Nemotron;
 use std::path::{Path, PathBuf};
 
-pub use parakeet_rs::{Nemotron as AsrModel, NemotronMode};
+pub use parakeet_rs::{
+    ExecutionConfig, Nemotron as AsrModel, NemotronMode, TimedToken, TimestampMode,
+    TranscriptionResult,
+};
 
 const HF_REPO: &str = "altunenes/parakeet-rs";
 const HF_DIR: &str = "nemotron-speech-streaming-en-0.6b";
@@ -52,7 +55,11 @@ pub fn resolve_model(explicit: Option<&Path>) -> Result<PathBuf> {
 }
 
 pub fn load(model_dir: &Path) -> Result<Nemotron> {
-    Nemotron::from_pretrained(model_dir, Some(execution_config()?))
+    load_with(model_dir, execution_config()?)
+}
+
+pub fn load_with(model_dir: &Path, config: ExecutionConfig) -> Result<Nemotron> {
+    Nemotron::from_pretrained(model_dir, Some(config))
         .with_context(|| format!("failed to load ASR model from {}", model_dir.display()))
 }
 
@@ -60,6 +67,13 @@ pub fn load(model_dir: &Path) -> Result<Nemotron> {
 pub fn transcribe(model: &mut Nemotron, samples: &[f32]) -> Result<String> {
     model
         .transcribe_audio(samples)
+        .context("ASR transcription failed")
+}
+
+/// Offline transcription with word-level timestamps (80 ms encoder frames).
+pub fn transcribe_words(model: &mut Nemotron, samples: &[f32]) -> Result<TranscriptionResult> {
+    model
+        .transcribe_audio_with_timestamps(samples, Some(TimestampMode::Words))
         .context("ASR transcription failed")
 }
 
@@ -77,7 +91,7 @@ pub fn flush(model: &mut Nemotron) -> Result<String> {
     transcribe_chunk(model, &pad)
 }
 
-fn execution_config() -> Result<ExecutionConfig> {
+pub fn execution_config() -> Result<ExecutionConfig> {
     let env = parakeet_rs::ort::init()
         .build()
         .context("failed to initialize ONNX Runtime")?;

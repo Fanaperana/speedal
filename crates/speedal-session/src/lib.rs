@@ -1,0 +1,385 @@
+use anyhow::Result;
+use serde::Serialize;
+use speedal_asr::{AsrModel, TimedToken};
+use speedal_audio::TARGET_HZ;
+use speedal_diar::{Sortformer, StreamingProfile, samples_to_secs};
+use std::path::Path;
+
+/// One speaker turn: who said what, with times in seconds.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Utterance {
+    pub start: f64,
+    pub end: f64,
+    pub speaker: usize,
+    pub text: String,
+}
+
+/// Incremental events for a live UI or CLI. `Turn` closes the current speaker.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Delta {
+        speaker: usize,
+        start: f64,
+        end: f64,
+        text: String,
+    },
+    Turn(Utterance),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Span {
+    start: u64,
+    end: u64,
+    speaker: usize,
+}
+
+struct Pending {
+    start: u64,
+    end: u64,
+    text: String,
+}
+
+/// Shared 16 kHz stream into both Nemotron models. The later UI can `feed`
+/// capture chunks and render [`Event`]s without going through the CLI.
+pub struct Session {
+    asr: AsrModel,
+    diar: Sortformer,
+    chunk_samples: usize,
+    latency_samples: u64,
+    asr_buf: Vec<f32>,
+    asr_cursor: u64,
+    cursor: u64,
+    spans: Vec<Span>,
+    pending: Vec<Pending>,
+    open: Option<Utterance>,
+    turns: Vec<Utterance>,
+}
+
+impl Session {
+    pub fn open(
+        asr_model: Option<&Path>,
+        diar_model: Option<&Path>,
+        profile: StreamingProfile,
+    ) -> Result<Self> {
+        let asr_dir = speedal_asr::resolve_model(asr_model)?;
+        let diar_path = speedal_diar::resolve_model(diar_model)?;
+        let exec = speedal_asr::execution_config()?;
+        let asr = speedal_asr::load_with(&asr_dir, exec.clone())?;
+        let mut diar = speedal_diar::load_with(&diar_path, exec)?;
+        diar.set_profile(profile)?;
+        let chunk_samples = asr.chunk_samples();
+        let latency_samples = (diar.latency() * TARGET_HZ as f32).ceil() as u64;
+        Ok(Self {
+            asr,
+            diar,
+            chunk_samples,
+            latency_samples,
+            asr_buf: Vec::new(),
+            asr_cursor: 0,
+            cursor: 0,
+            spans: Vec::new(),
+            pending: Vec::new(),
+            open: None,
+            turns: Vec::new(),
+        })
+    }
+
+    pub fn asr_chunk_secs(&self) -> f32 {
+        self.chunk_samples as f32 / TARGET_HZ as f32
+    }
+
+    pub fn diar_latency(&self) -> f32 {
+        self.diar.latency()
+    }
+
+    pub fn turns(&self) -> &[Utterance] {
+        &self.turns
+    }
+
+    /// Offline path: word timestamps + full-file diarization, then align.
+    pub fn transcribe_file(&mut self, samples: &[f32]) -> Result<Vec<Utterance>> {
+        let words = speedal_asr::transcribe_words(&mut self.asr, samples)?;
+        let segments = self.diar.diarize(samples.to_vec(), TARGET_HZ, 1)?;
+        let spans: Vec<Span> = segments
+            .iter()
+            .map(|seg| Span {
+                start: seg.start,
+                end: seg.end,
+                speaker: seg.speaker_id,
+            })
+            .collect();
+        let turns = group_turns(&words.tokens, &spans);
+        self.turns = turns.clone();
+        Ok(turns)
+    }
+
+    /// Live path: feed the same 16 kHz mono chunk to both models.
+    pub fn feed(&mut self, samples: &[f32]) -> Result<Vec<Event>> {
+        self.cursor += samples.len() as u64;
+        for seg in self.diar.feed(samples)? {
+            self.spans.push(Span {
+                start: seg.start,
+                end: seg.end,
+                speaker: seg.speaker_id,
+            });
+        }
+        self.asr_buf.extend_from_slice(samples);
+        while self.asr_buf.len() >= self.chunk_samples {
+            let chunk: Vec<f32> = self.asr_buf.drain(..self.chunk_samples).collect();
+            let start = self.asr_cursor;
+            self.asr_cursor += self.chunk_samples as u64;
+            let text = speedal_asr::transcribe_chunk(&mut self.asr, &chunk)?;
+            if !text.is_empty() {
+                self.pending.push(Pending {
+                    start,
+                    end: self.asr_cursor,
+                    text,
+                });
+            }
+        }
+        Ok(self.release(false))
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<Event>> {
+        if !self.asr_buf.is_empty() {
+            let mut chunk = std::mem::take(&mut self.asr_buf);
+            chunk.resize(self.chunk_samples, 0.0);
+            let start = self.asr_cursor;
+            self.asr_cursor += self.chunk_samples as u64;
+            let text = speedal_asr::transcribe_chunk(&mut self.asr, &chunk)?;
+            if !text.is_empty() {
+                self.pending.push(Pending {
+                    start,
+                    end: self.asr_cursor,
+                    text,
+                });
+            }
+        }
+        let tail = speedal_asr::flush(&mut self.asr)?;
+        if !tail.is_empty() {
+            let start = self.asr_cursor;
+            self.asr_cursor += self.chunk_samples as u64;
+            self.pending.push(Pending {
+                start,
+                end: self.asr_cursor,
+                text: tail,
+            });
+        }
+        for seg in self.diar.flush()? {
+            self.spans.push(Span {
+                start: seg.start,
+                end: seg.end,
+                speaker: seg.speaker_id,
+            });
+        }
+        let mut events = self.release(true);
+        if let Some(turn) = self.open.take() {
+            self.turns.push(turn.clone());
+            events.push(Event::Turn(turn));
+        }
+        Ok(events)
+    }
+
+    fn release(&mut self, force: bool) -> Vec<Event> {
+        let pending = std::mem::take(&mut self.pending);
+        let mut events = Vec::new();
+        for item in pending {
+            let ready = force || self.cursor >= item.end.saturating_add(self.latency_samples);
+            if !ready {
+                self.pending.push(item);
+                continue;
+            }
+            let speaker = speaker_for(item.start, item.end, &self.spans)
+                .or_else(|| self.open.as_ref().map(|t| t.speaker))
+                .or_else(|| self.spans.last().map(|s| s.speaker))
+                .unwrap_or(0);
+            let start = samples_to_secs(item.start);
+            let end = samples_to_secs(item.end);
+            events.push(Event::Delta {
+                speaker,
+                start,
+                end,
+                text: item.text.clone(),
+            });
+            match self.open.as_mut() {
+                Some(turn) if turn.speaker == speaker => {
+                    turn.text.push_str(&item.text);
+                    turn.end = end;
+                }
+                Some(_) => {
+                    let prev = self.open.take().expect("open turn");
+                    self.turns.push(prev.clone());
+                    events.push(Event::Turn(prev));
+                    self.open = Some(Utterance {
+                        start,
+                        end,
+                        speaker,
+                        text: item.text,
+                    });
+                }
+                None => {
+                    self.open = Some(Utterance {
+                        start,
+                        end,
+                        speaker,
+                        text: item.text,
+                    });
+                }
+            }
+        }
+        events
+    }
+}
+
+pub fn speaker_label(id: usize) -> String {
+    format!("speaker_{id}")
+}
+
+fn speaker_for(start: u64, end: u64, spans: &[Span]) -> Option<usize> {
+    let mut best = None;
+    let mut best_overlap = 0u64;
+    for span in spans {
+        let overlap_start = start.max(span.start);
+        let overlap_end = end.min(span.end);
+        if overlap_end > overlap_start {
+            let overlap = overlap_end - overlap_start;
+            if overlap >= best_overlap {
+                best_overlap = overlap;
+                best = Some(span.speaker);
+            }
+        }
+    }
+    best
+}
+
+fn append_word(dst: &mut String, word: &str) {
+    if dst.is_empty() {
+        dst.push_str(word);
+        return;
+    }
+    if !word.is_empty() && word.chars().all(|c| c.is_ascii_punctuation()) {
+        dst.push_str(word);
+    } else {
+        dst.push(' ');
+        dst.push_str(word);
+    }
+}
+
+fn group_turns(words: &[TimedToken], spans: &[Span]) -> Vec<Utterance> {
+    let mut turns = Vec::new();
+    let mut current: Option<Utterance> = None;
+    for word in words {
+        let text = word.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let start_sample = (word.start.max(0.0) * TARGET_HZ as f32) as u64;
+        let end_sample = (word.end.max(word.start).max(0.0) * TARGET_HZ as f32) as u64;
+        let punctuation = text.chars().all(|c| c.is_ascii_punctuation());
+        let speaker = if punctuation {
+            current
+                .as_ref()
+                .map(|t| t.speaker)
+                .or_else(|| speaker_for(start_sample, end_sample, spans))
+                .unwrap_or(0)
+        } else {
+            speaker_for(start_sample, end_sample, spans)
+                .or_else(|| current.as_ref().map(|t| t.speaker))
+                .unwrap_or(0)
+        };
+        match current.as_mut() {
+            Some(turn) if turn.speaker == speaker => {
+                append_word(&mut turn.text, text);
+                turn.end = word.end as f64;
+            }
+            Some(_) => {
+                turns.push(current.take().expect("current turn"));
+                current = Some(Utterance {
+                    start: word.start as f64,
+                    end: word.end as f64,
+                    speaker,
+                    text: text.to_string(),
+                });
+            }
+            None => {
+                current = Some(Utterance {
+                    start: word.start as f64,
+                    end: word.end as f64,
+                    speaker,
+                    text: text.to_string(),
+                });
+            }
+        }
+    }
+    if let Some(turn) = current {
+        turns.push(turn);
+    }
+    turns
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(text: &str, start: f32, end: f32) -> TimedToken {
+        TimedToken {
+            text: text.to_string(),
+            start,
+            end,
+        }
+    }
+
+    fn span(start_secs: f64, end_secs: f64, speaker: usize) -> Span {
+        Span {
+            start: (start_secs * TARGET_HZ as f64) as u64,
+            end: (end_secs * TARGET_HZ as f64) as u64,
+            speaker,
+        }
+    }
+
+    #[test]
+    fn assigns_the_speaker_with_more_overlap() {
+        let spans = [span(0.0, 1.0, 0), span(1.0, 2.0, 1)];
+        assert_eq!(speaker_for(0, 8_000, &spans), Some(0));
+        assert_eq!(speaker_for(16_000, 24_000, &spans), Some(1));
+        assert_eq!(speaker_for(12_000, 20_000, &spans), Some(1));
+    }
+
+    #[test]
+    fn groups_consecutive_words_into_speaker_turns() {
+        let words = [
+            word("Hello", 0.1, 0.4),
+            word("there", 0.4, 0.7),
+            word(".", 0.7, 0.8),
+            word("Hi", 1.2, 1.5),
+        ];
+        let spans = [span(0.0, 1.0, 0), span(1.0, 2.0, 1)];
+        let turns = group_turns(&words, &spans);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].speaker, 0);
+        assert_eq!(turns[0].text, "Hello there.");
+        assert_eq!(turns[1].speaker, 1);
+        assert_eq!(turns[1].text, "Hi");
+    }
+
+    #[test]
+    fn keeps_boundary_punctuation_with_the_current_speaker() {
+        let words = [word("NVIDIA", 0.8, 1.0), word(".", 1.0, 1.05), word("Hi", 1.1, 1.4)];
+        let spans = [span(0.0, 1.0, 0), span(1.0, 2.0, 1)];
+        let turns = group_turns(&words, &spans);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].text, "NVIDIA.");
+        assert_eq!(turns[1].speaker, 1);
+        assert_eq!(turns[1].text, "Hi");
+    }
+
+    #[test]
+    fn inherits_speaker_when_a_word_falls_in_a_gap() {
+        let words = [word("Hello", 0.1, 0.4), word("again", 1.05, 1.2)];
+        let spans = [span(0.0, 1.0, 2)];
+        let turns = group_turns(&words, &spans);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].speaker, 2);
+        assert_eq!(turns[0].text, "Hello again");
+    }
+}

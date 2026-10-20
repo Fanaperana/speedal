@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use hf_hub::api::sync::Api;
 use parakeet_rs::sortformer::DiarizationConfig;
-use parakeet_rs::ExecutionConfig;
 use std::path::{Path, PathBuf};
 
 pub use parakeet_rs::sortformer::{Sortformer, SpeakerSegment, StreamingProfile};
+pub use parakeet_rs::ExecutionConfig;
 
 /// ONNX export of nvidia/Nemotron-3-Diarization used by parakeet-rs.
 const HF_REPO: &str = "altunenes/parakeet-rs";
@@ -33,15 +33,15 @@ pub fn resolve_model(explicit: Option<&Path>) -> Result<PathBuf> {
 }
 
 pub fn load(model_path: &Path) -> Result<Sortformer> {
-    Sortformer::with_config(
-        model_path,
-        Some(execution_config()?),
-        DiarizationConfig::default(),
-    )
-    .with_context(|| format!("failed to load {}", model_path.display()))
+    load_with(model_path, execution_config()?)
 }
 
-fn execution_config() -> Result<ExecutionConfig> {
+pub fn load_with(model_path: &Path, config: ExecutionConfig) -> Result<Sortformer> {
+    Sortformer::with_config(model_path, Some(config), DiarizationConfig::default())
+        .with_context(|| format!("failed to load {}", model_path.display()))
+}
+
+pub fn execution_config() -> Result<ExecutionConfig> {
     let env = parakeet_rs::ort::init()
         .build()
         .context("failed to initialize ONNX Runtime")?;

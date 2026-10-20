@@ -2656,6 +2656,7 @@ dependencies = [
  "speedal-asr",
  "speedal-audio",
  "speedal-diar",
+ "speedal-session",
 ]
 
 [[package]]
@@ -2684,6 +2685,17 @@ dependencies = [
  "anyhow",
  "hf-hub",
  "parakeet-rs",
+]
+
+[[package]]
+name = "speedal-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "speedal-asr",
+ "speedal-audio",
+ "speedal-diar",
 ]
 
 [[package]]

@@ -1,0 +1,13 @@
+[package]
+name = "speedal-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Joint Nemotron ASR + diarization on one audio stream"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+speedal-asr.workspace = true
+speedal-audio.workspace = true
+speedal-diar.workspace = true
