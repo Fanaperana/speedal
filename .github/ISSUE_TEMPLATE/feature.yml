@@ -1,0 +1,34 @@
+name: Feature request
+description: An idea for the CLI, session API, or a later UI
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      placeholder: I want to enroll a speaker from a later UI without going through the CLI.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      placeholder: Expose Session::enroll_speaker and Gallery as the only write path.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - session / alignment
+        - ASR
+        - diarization
+        - speaker gallery
+        - capture
+        - CLI
+        - docs
+        - UI (phase 2)
+    validations:
+      required: true

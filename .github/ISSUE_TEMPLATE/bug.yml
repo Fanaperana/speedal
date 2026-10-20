@@ -1,0 +1,49 @@
+name: Bug report
+description: Something is broken in capture, ASR, diarization, or enrollment
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report. Please do not attach production audio that you cannot share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      placeholder: I ran `speedal both --listen` and speaker names never appeared.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: cargo run --release -- both meeting.wav
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: rustc
+    attributes:
+      label: Rust version
+      placeholder: rustc --version
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      render: text

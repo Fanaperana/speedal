@@ -1,7 +1,7 @@
 # speedal
 
 [![Rust](https://img.shields.io/badge/Rust-2024-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue)](https://spdx.org/licenses/MIT.html)
+[![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue)](LICENSE)
 [![ONNX Runtime](https://img.shields.io/badge/ONNX-Runtime-005CED)](https://onnxruntime.ai/)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-Nemotron-76B900?logo=nvidia&logoColor=white)](https://huggingface.co/nvidia/Nemotron-3-Diarization)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#quick-start)
@@ -221,4 +221,4 @@ crates/
   speedal-cli/       binary
 ```
 
-License: MIT OR Apache-2.0. Models keep their upstream licenses (NVIDIA Nemotron / TitaNet CC-BY-4.0).
+License: [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE). Models keep their upstream licenses (NVIDIA Nemotron / TitaNet CC-BY-4.0). Please read [CONTRIBUTING](CONTRIBUTING.md) and the [Code of Conduct](CODE_CONDUCT.md). Security reports go through [SECURITY](SECURITY.md).
