@@ -2651,13 +2651,29 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "ctrlc",
- "flexaudio",
- "hf-hub",
- "hound",
- "parakeet-rs",
  "serde",
  "serde_json",
+ "speedal-audio",
+ "speedal-diar",
+]
+
+[[package]]
+name = "speedal-audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctrlc",
+ "flexaudio",
+ "hound",
+]
+
+[[package]]
+name = "speedal-diar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hf-hub",
+ "parakeet-rs",
 ]
 
 [[package]]

@@ -1,7 +1,10 @@
 use anyhow::{Context, Result, bail};
 use flexaudio::{open, Event, OutputFormat, Permission, SourceKind, Stream, StreamConfig};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use crate::audio::TARGET_HZ;
+use crate::TARGET_HZ;
 
 pub fn open_system_loopback() -> Result<Stream> {
     let mut stream = open(StreamConfig {
@@ -46,4 +49,41 @@ pub fn handle_event(event: Event) -> Result<bool> {
         }
         _ => Ok(true),
     }
+}
+
+/// Capture system playback as 16 kHz mono chunks until Ctrl+C or `seconds`.
+pub fn listen_loop(
+    seconds: Option<f32>,
+    mut on_chunk: impl FnMut(&[f32], f32) -> Result<()>,
+) -> Result<()> {
+    let mut stream = open_system_loopback()?;
+    let running = Arc::new(AtomicBool::new(true));
+    let flag = running.clone();
+    ctrlc::set_handler(move || {
+        flag.store(false, Ordering::SeqCst);
+    })
+    .context("failed to install Ctrl+C handler")?;
+
+    let started = Instant::now();
+    let limit = seconds.map(Duration::from_secs_f32);
+
+    while running.load(Ordering::SeqCst) {
+        if limit.is_some_and(|limit| started.elapsed() >= limit) {
+            break;
+        }
+
+        while let Some(event) = stream.poll_event() {
+            if !handle_event(event)? {
+                running.store(false, Ordering::SeqCst);
+            }
+        }
+
+        match stream.poll_chunk() {
+            Some(chunk) => on_chunk(&chunk.data, chunk.rms)?,
+            None => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+
+    stream.stop();
+    Ok(())
 }

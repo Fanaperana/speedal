@@ -1,0 +1,12 @@
+[package]
+name = "speedal-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared audio loading and system-playback capture for speedal"
+
+[dependencies]
+anyhow.workspace = true
+ctrlc.workspace = true
+flexaudio.workspace = true
+hound.workspace = true
