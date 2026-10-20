@@ -18,3 +18,4 @@ speedal-asr.workspace = true
 speedal-audio.workspace = true
 speedal-diar.workspace = true
 speedal-session.workspace = true
+speedal-spk.workspace = true

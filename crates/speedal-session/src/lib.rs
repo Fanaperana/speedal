@@ -3,6 +3,8 @@ use serde::Serialize;
 use speedal_asr::{AsrModel, TimedToken};
 use speedal_audio::TARGET_HZ;
 use speedal_diar::{Sortformer, StreamingProfile, samples_to_secs};
+use speedal_spk::{Embedder, Gallery};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// One speaker turn: who said what, with times in seconds.
@@ -11,7 +13,15 @@ pub struct Utterance {
     pub start: f64,
     pub end: f64,
     pub speaker: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub text: String,
+}
+
+impl Utterance {
+    pub fn label(&self) -> String {
+        display_label(self.speaker, self.name.as_deref())
+    }
 }
 
 /// Incremental events for a live UI or CLI. `Turn` closes the current speaker.
@@ -19,6 +29,7 @@ pub struct Utterance {
 pub enum Event {
     Delta {
         speaker: usize,
+        name: Option<String>,
         start: f64,
         end: f64,
         text: String,
@@ -44,6 +55,11 @@ struct Pending {
 pub struct Session {
     asr: AsrModel,
     diar: Sortformer,
+    embedder: Embedder,
+    gallery: Gallery,
+    names: HashMap<usize, String>,
+    resolved: HashSet<usize>,
+    captured: Vec<f32>,
     chunk_samples: usize,
     latency_samples: u64,
     asr_buf: Vec<f32>,
@@ -59,19 +75,29 @@ impl Session {
     pub fn open(
         asr_model: Option<&Path>,
         diar_model: Option<&Path>,
+        embed_model: Option<&Path>,
+        gallery: Option<&Path>,
         profile: StreamingProfile,
     ) -> Result<Self> {
         let asr_dir = speedal_asr::resolve_model(asr_model)?;
         let diar_path = speedal_diar::resolve_model(diar_model)?;
+        let embed_path = speedal_spk::resolve_model(embed_model)?;
         let exec = speedal_asr::execution_config()?;
         let asr = speedal_asr::load_with(&asr_dir, exec.clone())?;
-        let mut diar = speedal_diar::load_with(&diar_path, exec)?;
+        let mut diar = speedal_diar::load_with(&diar_path, exec.clone())?;
+        let embedder = Embedder::load_with(&embed_path, exec)?;
         diar.set_profile(profile)?;
         let chunk_samples = asr.chunk_samples();
         let latency_samples = (diar.latency() * TARGET_HZ as f32).ceil() as u64;
+        let gallery = Gallery::open(gallery)?;
         Ok(Self {
             asr,
             diar,
+            embedder,
+            gallery,
+            names: HashMap::new(),
+            resolved: HashSet::new(),
+            captured: Vec::new(),
             chunk_samples,
             latency_samples,
             asr_buf: Vec::new(),
@@ -108,13 +134,19 @@ impl Session {
                 speaker: seg.speaker_id,
             })
             .collect();
-        let turns = group_turns(&words.tokens, &spans);
+        let mut turns = group_turns(&words.tokens, &spans);
+        self.spans = spans;
+        self.refresh_names(samples)?;
+        for turn in &mut turns {
+            turn.name = self.names.get(&turn.speaker).cloned();
+        }
         self.turns = turns.clone();
         Ok(turns)
     }
 
     /// Live path: feed the same 16 kHz mono chunk to both models.
     pub fn feed(&mut self, samples: &[f32]) -> Result<Vec<Event>> {
+        self.captured.extend_from_slice(samples);
         self.cursor += samples.len() as u64;
         for seg in self.diar.feed(samples)? {
             self.spans.push(Span {
@@ -123,6 +155,10 @@ impl Session {
                 speaker: seg.speaker_id,
             });
         }
+        let captured = std::mem::take(&mut self.captured);
+        let named = self.refresh_names(&captured);
+        self.captured = captured;
+        named?;
         self.asr_buf.extend_from_slice(samples);
         while self.asr_buf.len() >= self.chunk_samples {
             let chunk: Vec<f32> = self.asr_buf.drain(..self.chunk_samples).collect();
@@ -172,8 +208,13 @@ impl Session {
                 speaker: seg.speaker_id,
             });
         }
+        let captured = std::mem::take(&mut self.captured);
+        let named = self.refresh_names(&captured);
+        self.captured = captured;
+        named?;
         let mut events = self.release(true);
-        if let Some(turn) = self.open.take() {
+        if let Some(mut turn) = self.open.take() {
+            turn.name = self.names.get(&turn.speaker).cloned();
             self.turns.push(turn.clone());
             events.push(Event::Turn(turn));
         }
@@ -193,10 +234,12 @@ impl Session {
                 .or_else(|| self.open.as_ref().map(|t| t.speaker))
                 .or_else(|| self.spans.last().map(|s| s.speaker))
                 .unwrap_or(0);
+            let name = self.names.get(&speaker).cloned();
             let start = samples_to_secs(item.start);
             let end = samples_to_secs(item.end);
             events.push(Event::Delta {
                 speaker,
+                name: name.clone(),
                 start,
                 end,
                 text: item.text.clone(),
@@ -205,6 +248,7 @@ impl Session {
                 Some(turn) if turn.speaker == speaker => {
                     turn.text.push_str(&item.text);
                     turn.end = end;
+                    turn.name = name;
                 }
                 Some(_) => {
                     let prev = self.open.take().expect("open turn");
@@ -214,6 +258,7 @@ impl Session {
                         start,
                         end,
                         speaker,
+                        name,
                         text: item.text,
                     });
                 }
@@ -222,6 +267,7 @@ impl Session {
                         start,
                         end,
                         speaker,
+                        name,
                         text: item.text,
                     });
                 }
@@ -229,10 +275,46 @@ impl Session {
         }
         events
     }
+
+    fn refresh_names(&mut self, samples: &[f32]) -> Result<()> {
+        let segments: Vec<(u64, u64, usize)> = self
+            .spans
+            .iter()
+            .filter(|span| !self.resolved.contains(&span.speaker))
+            .map(|span| (span.start, span.end, span.speaker))
+            .collect();
+        if segments.is_empty() {
+            return Ok(());
+        }
+        let found = speedal_spk::identify_speakers(
+            &mut self.embedder,
+            &self.gallery,
+            samples,
+            &segments,
+        )?;
+        self.names.extend(found);
+        for speaker in segments.iter().map(|(_, _, id)| *id) {
+            let dur: usize = segments
+                .iter()
+                .filter(|(_, _, id)| *id == speaker)
+                .map(|(start, end, _)| (*end).saturating_sub(*start) as usize)
+                .sum();
+            if dur >= TARGET_HZ as usize {
+                self.resolved.insert(speaker);
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn speaker_label(id: usize) -> String {
     format!("speaker_{id}")
+}
+
+pub fn display_label(id: usize, name: Option<&str>) -> String {
+    name.filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| speaker_label(id))
 }
 
 fn speaker_for(start: u64, end: u64, spans: &[Span]) -> Option<usize> {
@@ -298,6 +380,7 @@ fn group_turns(words: &[TimedToken], spans: &[Span]) -> Vec<Utterance> {
                     start: word.start as f64,
                     end: word.end as f64,
                     speaker,
+                    name: None,
                     text: text.to_string(),
                 });
             }
@@ -306,6 +389,7 @@ fn group_turns(words: &[TimedToken], spans: &[Span]) -> Vec<Utterance> {
                     start: word.start as f64,
                     end: word.end as f64,
                     speaker,
+                    name: None,
                     text: text.to_string(),
                 });
             }

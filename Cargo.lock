@@ -2657,6 +2657,7 @@ dependencies = [
  "speedal-audio",
  "speedal-diar",
  "speedal-session",
+ "speedal-spk",
 ]
 
 [[package]]
@@ -2666,6 +2667,7 @@ dependencies = [
  "anyhow",
  "hf-hub",
  "parakeet-rs",
+ "speedal-audio",
 ]
 
 [[package]]
@@ -2676,6 +2678,7 @@ dependencies = [
  "ctrlc",
  "flexaudio",
  "hound",
+ "parakeet-rs",
 ]
 
 [[package]]
@@ -2685,6 +2688,7 @@ dependencies = [
  "anyhow",
  "hf-hub",
  "parakeet-rs",
+ "speedal-audio",
 ]
 
 [[package]]
@@ -2696,6 +2700,22 @@ dependencies = [
  "speedal-asr",
  "speedal-audio",
  "speedal-diar",
+ "speedal-spk",
+]
+
+[[package]]
+name = "speedal-spk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "hf-hub",
+ "ndarray",
+ "parakeet-rs",
+ "realfft",
+ "serde",
+ "serde_json",
+ "speedal-audio",
 ]
 
 [[package]]

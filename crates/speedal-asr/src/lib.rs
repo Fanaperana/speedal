@@ -92,12 +92,5 @@ pub fn flush(model: &mut Nemotron) -> Result<String> {
 }
 
 pub fn execution_config() -> Result<ExecutionConfig> {
-    let env = parakeet_rs::ort::init()
-        .build()
-        .context("failed to initialize ONNX Runtime")?;
-    let mut config = ExecutionConfig::new().with_environment(env);
-    config.intra_threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    Ok(config)
+    speedal_audio::execution_config()
 }

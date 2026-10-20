@@ -9,3 +9,4 @@ description = "NVIDIA Nemotron streaming ASR"
 anyhow.workspace = true
 hf-hub.workspace = true
 parakeet-rs.workspace = true
+speedal-audio.workspace = true

@@ -10,3 +10,4 @@ anyhow.workspace = true
 ctrlc.workspace = true
 flexaudio.workspace = true
 hound.workspace = true
+parakeet-rs.workspace = true

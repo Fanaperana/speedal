@@ -1,6 +1,7 @@
 mod asr;
 mod both;
 mod diar;
+mod enroll;
 
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -22,6 +23,10 @@ enum Command {
     Asr(AsrArgs),
     /// Who said what (ASR and diarization on the same stream)
     Both(BothArgs),
+    /// Save a speaker voice print for later sessions
+    Enroll(EnrollArgs),
+    /// List or forget saved speaker voice prints
+    Speakers(SpeakersArgs),
 }
 
 #[derive(Args, Debug)]
@@ -92,6 +97,50 @@ struct BothArgs {
     /// Stop listen mode after this many seconds
     #[arg(long)]
     seconds: Option<f32>,
+
+    /// Path to TitaNet Large ONNX. Downloaded automatically if omitted.
+    #[arg(long)]
+    embed_model: Option<PathBuf>,
+
+    /// Speaker gallery JSON. Defaults to the user data directory.
+    #[arg(long)]
+    gallery: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct EnrollArgs {
+    /// Name to store (for example Alice)
+    name: String,
+
+    /// WAV clip of that speaker, or a meeting to crop with --speaker
+    audio: PathBuf,
+
+    /// Diarized speaker id to enroll from a multi-speaker file
+    #[arg(short, long)]
+    speaker: Option<usize>,
+
+    /// Path to TitaNet Large ONNX. Downloaded automatically if omitted.
+    #[arg(long)]
+    embed_model: Option<PathBuf>,
+
+    /// Path to Nemotron-3 diarization ONNX (only needed with --speaker)
+    #[arg(long)]
+    diar_model: Option<PathBuf>,
+
+    /// Speaker gallery JSON. Defaults to the user data directory.
+    #[arg(long)]
+    gallery: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct SpeakersArgs {
+    /// Remove this saved speaker
+    #[arg(long)]
+    forget: Option<String>,
+
+    /// Speaker gallery JSON. Defaults to the user data directory.
+    #[arg(long)]
+    gallery: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -164,5 +213,7 @@ fn main() -> Result<()> {
             }
             both::run(args)
         }
+        Command::Enroll(args) => enroll::run(args),
+        Command::Speakers(args) => enroll::list_or_forget(args),
     }
 }

@@ -42,12 +42,5 @@ pub fn load_with(model_path: &Path, config: ExecutionConfig) -> Result<Sortforme
 }
 
 pub fn execution_config() -> Result<ExecutionConfig> {
-    let env = parakeet_rs::ort::init()
-        .build()
-        .context("failed to initialize ONNX Runtime")?;
-    let mut config = ExecutionConfig::new().with_environment(env);
-    config.intra_threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    Ok(config)
+    speedal_audio::execution_config()
 }

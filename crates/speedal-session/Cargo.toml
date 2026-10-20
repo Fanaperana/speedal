@@ -11,3 +11,4 @@ serde.workspace = true
 speedal-asr.workspace = true
 speedal-audio.workspace = true
 speedal-diar.workspace = true
+speedal-spk.workspace = true

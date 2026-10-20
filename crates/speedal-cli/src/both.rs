@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::Serialize;
 use speedal_audio::{TARGET_HZ, listen_loop, load_wav, permission_hint};
-use speedal_session::{Event, Session, Utterance, speaker_label};
+use speedal_session::{Event, Session, Utterance};
 use std::io::{self, Write};
 use std::path::Path;
 use std::time::Instant;
@@ -32,6 +32,8 @@ pub fn run(args: BothArgs) -> Result<()> {
     let mut session = Session::open(
         args.asr_model.as_deref(),
         args.diar_model.as_deref(),
+        args.embed_model.as_deref(),
+        args.gallery.as_deref(),
         profile.streaming(),
     )?;
     if args.format == Format::Text {
@@ -141,7 +143,7 @@ fn emit_file(
                         "[{:7.2}s - {:7.2}s] {}  {}",
                         turn.start,
                         turn.end,
-                        speaker_label(turn.speaker),
+                        turn.label(),
                         turn.text
                     );
                 }
@@ -157,7 +159,7 @@ fn emit_file(
                 println!(
                     "SPEAKER {file_id} 1 {:.3} {dur:.3} <NA> <NA> {} <NA> <NA>",
                     turn.start,
-                    speaker_label(turn.speaker)
+                    turn.label()
                 );
             }
         }
@@ -173,24 +175,25 @@ fn emit_live(
 ) -> Result<()> {
     for event in events {
         match (format, event) {
-            (Format::Text | Format::Rttm, Event::Delta { speaker, text, .. }) => {
+            (Format::Text | Format::Rttm, Event::Delta { speaker, name, text, .. }) => {
                 if current_speaker.is_none_or(|id| id != *speaker) {
                     if current_speaker.is_some() {
                         writeln!(out)?;
                     }
-                    write!(out, "{}: ", speaker_label(*speaker))?;
+                    write!(out, "{}: ", speedal_session::display_label(*speaker, name.as_deref()))?;
                     *current_speaker = Some(*speaker);
                 }
                 write!(out, "{text}")?;
                 out.flush()?;
             }
-            (Format::Json, Event::Delta { speaker, start, end, text }) => {
+            (Format::Json, Event::Delta { speaker, name, start, end, text }) => {
                 writeln!(
                     out,
                     "{}",
                     serde_json::json!({
                         "type": "delta",
-                        "speaker": speaker_label(*speaker),
+                        "speaker": speedal_session::display_label(*speaker, name.as_deref()),
+                        "speaker_id": speaker,
                         "start": start,
                         "end": end,
                         "text": text,
@@ -204,7 +207,8 @@ fn emit_live(
                     "{}",
                     serde_json::json!({
                         "type": "turn",
-                        "speaker": speaker_label(turn.speaker),
+                        "speaker": turn.label(),
+                        "speaker_id": turn.speaker,
                         "start": turn.start,
                         "end": turn.end,
                         "text": turn.text,
