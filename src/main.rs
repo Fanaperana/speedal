@@ -1,7 +1,9 @@
 mod audio;
+mod capture;
+mod listen;
 mod model;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use audio::load_wav;
 use clap::{Parser, ValueEnum};
 use model::{load_sortformer, resolve_model_path};
@@ -12,25 +14,34 @@ use std::time::Instant;
 
 /// Speaker diarization with NVIDIA Nemotron-3 Diarization (Sortformer v3).
 ///
-/// Accepts a WAV file, runs "who spoke when" for up to eight speakers, and prints
-/// segments. The ONNX weights are downloaded from Hugging Face on first use.
+/// Pass a WAV file, or `listen` to diarize this computer's playback live.
+/// The ONNX weights are downloaded from Hugging Face on first use.
 #[derive(Parser, Debug)]
 #[command(name = "speedal", version, about, long_about = None)]
 struct Cli {
-    /// Path to a WAV file (any common sample rate; converted to 16 kHz mono)
-    audio: PathBuf,
+    /// WAV file, or `listen` to capture speakers/headphones
+    #[arg(required_unless_present = "listen")]
+    audio: Option<PathBuf>,
+
+    /// Capture this computer's playback instead of a file
+    #[arg(short = 'L', long)]
+    listen: bool,
 
     /// Path to nemotron3_diar_v3.onnx. Downloaded automatically if omitted.
     #[arg(short, long)]
     model: Option<PathBuf>,
 
-    /// NVIDIA latency profile. Lower values cost more compute.
-    #[arg(short, long, value_enum, default_value_t = Profile::Offline)]
-    profile: Profile,
+    /// NVIDIA latency profile. Files default to offline; listen defaults to low.
+    #[arg(short, long, value_enum)]
+    profile: Option<Profile>,
 
     /// Output format
     #[arg(short, long, value_enum, default_value_t = Format::Text)]
     format: Format,
+
+    /// Stop listen mode after this many seconds
+    #[arg(long)]
+    seconds: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -47,7 +58,7 @@ enum Profile {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-enum Format {
+pub(crate) enum Format {
     Text,
     Json,
     Rttm,
@@ -90,28 +101,55 @@ struct JsonSegment {
     speaker: String,
 }
 
+fn wants_listen(cli: &Cli) -> bool {
+    cli.listen || cli.audio.as_deref().is_some_and(|path| path.as_os_str() == "listen")
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let model_path = resolve_model_path(cli.model.as_deref())?;
-    let wav = load_wav(&cli.audio)?;
+    let listen = wants_listen(&cli);
+    if !listen && cli.audio.is_none() {
+        bail!("provide a WAV file or run `speedal listen`");
+    }
 
+    let profile = cli.profile.unwrap_or(if listen {
+        Profile::Low
+    } else {
+        Profile::Offline
+    });
+
+    let model_path = resolve_model_path(cli.model.as_deref())?;
     if cli.format == Format::Text {
-        eprintln!(
-            "Loaded {:.1}s from {} → {} 16 kHz mono samples",
-            wav.duration_secs,
-            cli.audio.display(),
-            wav.samples.len()
-        );
         eprintln!("Model: {}", model_path.display());
     }
 
     let mut diarizer = load_sortformer(&model_path)?;
     diarizer
-        .set_profile(cli.profile.streaming())
+        .set_profile(profile.streaming())
         .context("invalid streaming profile")?;
 
     if cli.format == Format::Text {
-        eprintln!("Latency profile: {} ({:.2}s buffer)", cli.profile.as_str(), diarizer.latency());
+        eprintln!(
+            "Latency profile: {} ({:.2}s buffer)",
+            profile.as_str(),
+            diarizer.latency()
+        );
+    }
+
+    if listen {
+        return listen::run(diarizer, cli.format, cli.seconds);
+    }
+
+    let audio_path = cli.audio.expect("WAV path");
+    let wav = load_wav(&audio_path)?;
+
+    if cli.format == Format::Text {
+        eprintln!(
+            "Loaded {:.1}s from {} → {} 16 kHz mono samples",
+            wav.duration_secs,
+            audio_path.display(),
+            wav.samples.len()
+        );
     }
 
     let started = Instant::now();
@@ -122,14 +160,21 @@ fn main() -> Result<()> {
 
     match cli.format {
         Format::Text => print_text(&segments, elapsed),
-        Format::Json => print_json(&cli, &segments, wav.duration_secs, diarizer.latency(), elapsed)?,
-        Format::Rttm => print_rttm(&cli.audio, &segments),
+        Format::Json => print_json(
+            &audio_path,
+            profile.as_str(),
+            &segments,
+            wav.duration_secs,
+            diarizer.latency(),
+            elapsed,
+        )?,
+        Format::Rttm => print_rttm(&audio_path, &segments),
     }
 
     Ok(())
 }
 
-fn samples_to_secs(samples: u64) -> f64 {
+pub(crate) fn samples_to_secs(samples: u64) -> f64 {
     samples as f64 / 16_000.0
 }
 
@@ -150,16 +195,17 @@ fn print_text(segments: &[SpeakerSegment], elapsed: f32) {
 }
 
 fn print_json(
-    cli: &Cli,
+    audio: &std::path::Path,
+    profile: &str,
     segments: &[SpeakerSegment],
     duration_secs: f32,
     latency_secs: f32,
     elapsed_secs: f32,
 ) -> Result<()> {
     let output = JsonOutput {
-        audio: cli.audio.display().to_string(),
+        audio: audio.display().to_string(),
         duration_secs,
-        profile: cli.profile.as_str(),
+        profile,
         latency_secs,
         elapsed_secs,
         segments: segments

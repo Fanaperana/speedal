@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 
-const TARGET_HZ: u32 = 16_000;
+pub const TARGET_HZ: u32 = 16_000;
 
 /// 16 kHz mono samples plus the original file's duration in seconds.
 pub struct Audio {
