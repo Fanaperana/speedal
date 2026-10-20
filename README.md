@@ -1,5 +1,12 @@
 # speedal
 
+[![Rust](https://img.shields.io/badge/Rust-2024-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue)](https://spdx.org/licenses/MIT.html)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX-Runtime-005CED)](https://onnxruntime.ai/)
+[![NVIDIA](https://img.shields.io/badge/NVIDIA-Nemotron-76B900?logo=nvidia&logoColor=white)](https://huggingface.co/nvidia/Nemotron-3-Diarization)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#quick-start)
+[![Inference](https://img.shields.io/badge/inference-local-success)](#how-it-works)
+
 Local **who said what** on this computer’s speakers. One 16 kHz stream feeds three NVIDIA models at once: streaming ASR, speaker diarization, and a voice print that survives the next meeting.
 
 ```
