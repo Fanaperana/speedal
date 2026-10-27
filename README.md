@@ -43,12 +43,12 @@ Sortformer IDs are **arrival order in this session**. TitaNet is what makes `spe
 
 ## Architecture
 
-Libraries do the work. The CLI is a thin consumer. A later UI can call the same `Session` without going through clap.
+Libraries do the work. The CLI and the Tauri desktop app are thin consumers of the same `Session`.
 
 ```mermaid
 flowchart TB
     CLI["speedal CLI"] --> S["speedal-session"]
-    UI["future UI"] --> S
+    UI["speedal desktop"] --> S
     S --> ASR["speedal-asr"]
     S --> DIAR["speedal-diar"]
     S --> SPK["speedal-spk"]
@@ -69,6 +69,7 @@ flowchart TB
 | `speedal-spk` | TitaNet frontend (80-bin log-mel) + `speakers.json` gallery |
 | `speedal-session` | One stream, three models, speaker-attributed events |
 | `speedal-cli` | `diar` / `asr` / `both` / `enroll` / `speakers` |
+| `speedal-app` | Tauri v2 desktop UI (React + shadcn) |
 
 ## Runtime flow
 
@@ -153,6 +154,14 @@ cargo run --release -- both meeting.wav
 cargo run --release -- both --listen
 ```
 
+Desktop app (Node 20+, same Rust workspace):
+
+```bash
+cd apps/desktop
+pnpm install
+pnpm tauri dev
+```
+
 First `both` downloads roughly:
 
 - ASR ~2.5 GB (`encoder.onnx` + `encoder.onnx.data`)
@@ -185,7 +194,7 @@ speedal both --listen                 # live + enroll Alice
 
 Files default to diarization `offline`; listen defaults to `low`.
 
-## Library (for a later UI)
+## Library (CLI and desktop)
 
 ```rust
 let mut session = speedal_session::Session::open(
@@ -207,7 +216,7 @@ session.enroll_speaker("Alice", None)?; // persist voice print
 session.flush()?;
 ```
 
-`speedal-audio::listen_loop` is the capture source; the UI can replace it with a mic or a file reader and still use `Session`.
+`speedal-audio::listen_loop` is the capture source; the desktop app feeds the same `Session` from a background thread and streams `Event`s to React.
 
 ## Layout
 
@@ -219,6 +228,8 @@ crates/
   speedal-spk/       TitaNet + gallery
   speedal-session/   joint pipeline
   speedal-cli/       binary
+apps/desktop/        Tauri v2 + React + shadcn UI
+  src-tauri/         speedal-app crate
 ```
 
 License: [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE). Models keep their upstream licenses (NVIDIA Nemotron / TitaNet CC-BY-4.0). Please read [CONTRIBUTING](CONTRIBUTING.md) and the [Code of Conduct](CODE_CONDUCT.md). Security reports go through [SECURITY](SECURITY.md).

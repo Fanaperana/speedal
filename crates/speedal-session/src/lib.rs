@@ -25,7 +25,8 @@ impl Utterance {
 }
 
 /// Incremental events for a live UI or CLI. `Turn` closes the current speaker.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     Delta {
         speaker: usize,
@@ -118,6 +119,12 @@ impl Session {
         self.diar.latency()
     }
 
+    pub fn set_profile(&mut self, profile: StreamingProfile) -> Result<()> {
+        self.diar.set_profile(profile)?;
+        self.latency_samples = (self.diar.latency() * TARGET_HZ as f32).ceil() as u64;
+        Ok(())
+    }
+
     pub fn turns(&self) -> &[Utterance] {
         &self.turns
     }
@@ -127,6 +134,56 @@ impl Session {
             .as_ref()
             .map(|turn| turn.speaker)
             .or_else(|| self.spans.last().map(|span| span.speaker))
+    }
+
+    pub fn gallery_path(&self) -> &Path {
+        self.gallery.path()
+    }
+
+    pub fn speakers(&self) -> &[speedal_spk::SpeakerRecord] {
+        &self.gallery.speakers
+    }
+
+    /// Drop a saved voice print and un-name matching turns in this session.
+    pub fn forget_speaker(&mut self, name: &str) -> Result<speedal_spk::SpeakerRecord> {
+        let record = self.gallery.forget(name)?;
+        self.gallery.save()?;
+        self.names
+            .retain(|_, saved| !saved.eq_ignore_ascii_case(&record.name));
+        self.resolved.clear();
+        for turn in &mut self.turns {
+            if turn
+                .name
+                .as_deref()
+                .is_some_and(|saved| saved.eq_ignore_ascii_case(&record.name))
+            {
+                turn.name = None;
+            }
+        }
+        if let Some(turn) = &mut self.open {
+            if turn
+                .name
+                .as_deref()
+                .is_some_and(|saved| saved.eq_ignore_ascii_case(&record.name))
+            {
+                turn.name = None;
+            }
+        }
+        Ok(record)
+    }
+
+    /// Clear live buffers so the next listen/file does not inherit turns.
+    pub fn reset(&mut self) {
+        self.names.clear();
+        self.resolved.clear();
+        self.captured.clear();
+        self.asr_buf.clear();
+        self.asr_cursor = 0;
+        self.cursor = 0;
+        self.spans.clear();
+        self.pending.clear();
+        self.open = None;
+        self.turns.clear();
     }
 
     /// Save the current (or given) diarized speaker into the gallery.

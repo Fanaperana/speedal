@@ -51,19 +51,13 @@ pub fn handle_event(event: Event) -> Result<bool> {
     }
 }
 
-/// Capture system playback as 16 kHz mono chunks until Ctrl+C or `seconds`.
-pub fn listen_loop(
+/// Capture system playback as 16 kHz mono chunks until `running` is false or `seconds`.
+pub fn listen_until(
+    running: Arc<AtomicBool>,
     seconds: Option<f32>,
     mut on_chunk: impl FnMut(&[f32], f32) -> Result<()>,
 ) -> Result<()> {
     let mut stream = open_system_loopback()?;
-    let running = Arc::new(AtomicBool::new(true));
-    let flag = running.clone();
-    ctrlc::set_handler(move || {
-        flag.store(false, Ordering::SeqCst);
-    })
-    .context("failed to install Ctrl+C handler")?;
-
     let started = Instant::now();
     let limit = seconds.map(Duration::from_secs_f32);
 
@@ -86,4 +80,18 @@ pub fn listen_loop(
 
     stream.stop();
     Ok(())
+}
+
+/// Capture system playback as 16 kHz mono chunks until Ctrl+C or `seconds`.
+pub fn listen_loop(
+    seconds: Option<f32>,
+    on_chunk: impl FnMut(&[f32], f32) -> Result<()>,
+) -> Result<()> {
+    let running = Arc::new(AtomicBool::new(true));
+    let flag = running.clone();
+    ctrlc::set_handler(move || {
+        flag.store(false, Ordering::SeqCst);
+    })
+    .context("failed to install Ctrl+C handler")?;
+    listen_until(running, seconds, on_chunk)
 }

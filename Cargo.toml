@@ -7,6 +7,7 @@ members = [
     "crates/speedal-spk",
     "crates/speedal-session",
     "crates/speedal-cli",
+    "apps/desktop/src-tauri",
 ]
 default-members = ["crates/speedal-cli"]
 
