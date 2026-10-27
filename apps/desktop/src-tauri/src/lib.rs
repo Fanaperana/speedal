@@ -75,6 +75,15 @@ fn clear_transcript(engine: State<Engine>) -> Result<(), String> {
     ask(&engine, |reply| Cmd::Clear { reply })
 }
 
+#[tauri::command]
+fn remove_turn(engine: State<Engine>, speaker: usize, start: f64) -> Result<(), String> {
+    ask(&engine, |reply| Cmd::RemoveTurn {
+        speaker,
+        start,
+        reply,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -104,6 +113,7 @@ pub fn run() {
             transcribe_file,
             enroll_speaker,
             clear_transcript,
+            remove_turn,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

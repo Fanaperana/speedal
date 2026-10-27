@@ -13,6 +13,16 @@ import { SpeakersPane } from "@/components/speakers-pane"
 import { TranscriptPane } from "@/components/transcript-pane"
 import { useTheme } from "@/components/theme-provider"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -35,6 +45,8 @@ import {
   getAppInfo,
   listSpeakers,
   pickWav,
+  removeTurn,
+  sameTurn,
   startListen,
   stopListen,
   subscribe,
@@ -68,6 +80,7 @@ export function App() {
   const [asrChunkMs, setAsrChunkMs] = React.useState<number | null>(null)
   const [diarLatency, setDiarLatency] = React.useState<number | null>(null)
   const [busy, setBusy] = React.useState(false)
+  const [confirmClear, setConfirmClear] = React.useState(false)
   const liveRef = React.useRef<Turn | null>(null)
 
   const listening = status === "listening"
@@ -173,10 +186,7 @@ export function App() {
             text: event.text,
           }
           setTurns((current) => {
-            const exists = current.some(
-              (turn) =>
-                turn.speaker === closed.speaker && turn.start === closed.start
-            )
+            const exists = current.some((turn) => sameTurn(turn, closed))
             return exists ? current : [...current, closed]
           })
           if (liveRef.current?.speaker === event.speaker) {
@@ -202,6 +212,15 @@ export function App() {
           setTurns([])
           setLive(null)
           setRms(0)
+          break
+        case "turn_removed":
+          setTurns((current) =>
+            current.filter((turn) => !sameTurn(turn, event))
+          )
+          if (liveRef.current && sameTurn(liveRef.current, event)) {
+            liveRef.current = null
+            setLive(null)
+          }
           break
       }
     }).then((fn) => {
@@ -260,6 +279,15 @@ export function App() {
   async function onClear() {
     try {
       await clearTranscript()
+      setConfirmClear(false)
+    } catch (cause) {
+      toast.error(String(cause))
+    }
+  }
+
+  async function onRemoveTurn(turn: Turn) {
+    try {
+      await removeTurn(turn.speaker, turn.start)
     } catch (cause) {
       toast.error(String(cause))
     }
@@ -268,7 +296,7 @@ export function App() {
   const meter = Math.min(1, Math.max(0, rms * 8))
 
   return (
-    <div className="flex h-svh flex-col overflow-hidden bg-background text-[13px]">
+    <div className="flex h-svh min-h-0 flex-col overflow-hidden bg-background text-[13px]">
       <header className="flex h-9 shrink-0 items-center gap-1.5 border-b px-2">
         <h1 className="px-1 font-heading text-[13px] font-medium">speedal</h1>
         <StatusBadge status={status} />
@@ -352,14 +380,15 @@ export function App() {
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  onClick={() => void onClear()}
+                  disabled={turns.length === 0 && live === null}
+                  onClick={() => setConfirmClear(true)}
                 />
               }
             >
               <Trash2Icon />
               <span className="sr-only">Clear transcript</span>
             </TooltipTrigger>
-            <TooltipContent>Clear transcript</TooltipContent>
+            <TooltipContent>Clear all turns</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -387,7 +416,7 @@ export function App() {
         </div>
       </header>
       {error || loading || detail ? (
-        <div className="border-b px-2 py-1">
+        <div className="shrink-0 border-b px-2 py-1">
           {error ? (
             <Alert variant="destructive">
               <AlertTitle>Error</AlertTitle>
@@ -409,32 +438,69 @@ export function App() {
           )}
         </div>
       ) : null}
-      <div className="min-h-0 flex-1">
-        <ResizablePanelGroup orientation="horizontal">
-          <ResizablePanel defaultSize="78%" minSize="50%" className="min-h-0">
-            <TranscriptPane
-              turns={turns}
-              live={live}
-              listening={listening}
-              busy={loading || !desktopReady}
-              hint={permissionHint || undefined}
-              onListen={() => void onListen()}
-              onOpenFile={() => void onOpenFile()}
-            />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="h-full min-h-0"
+        >
+          <ResizablePanel
+            defaultSize="78%"
+            minSize="50%"
+            className="min-h-0 overflow-hidden"
+          >
+            <div className="h-full min-h-0 overflow-hidden">
+              <TranscriptPane
+                turns={turns}
+                live={live}
+                listening={listening}
+                busy={loading || !desktopReady}
+                hint={permissionHint || undefined}
+                onListen={() => void onListen()}
+                onOpenFile={() => void onOpenFile()}
+                onRemove={(turn) => void onRemoveTurn(turn)}
+              />
+            </div>
           </ResizablePanel>
           <ResizableHandle />
-          <ResizablePanel defaultSize="22%" minSize="18%" className="min-h-0">
-            <SpeakersPane
-              speakers={speakers}
-              galleryPath={galleryPath}
-              lastSpeaker={lastSpeaker}
-              lastName={lastName}
-              canEnroll={desktopReady && (listening || turns.length > 0)}
-              onChanged={() => void refreshSpeakers()}
-            />
+          <ResizablePanel
+            defaultSize="22%"
+            minSize="18%"
+            className="min-h-0 overflow-hidden"
+          >
+            <div className="h-full min-h-0 overflow-hidden">
+              <SpeakersPane
+                speakers={speakers}
+                galleryPath={galleryPath}
+                lastSpeaker={lastSpeaker}
+                lastName={lastName}
+                canEnroll={desktopReady && (listening || turns.length > 0)}
+                onChanged={() => void refreshSpeakers()}
+              />
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all turns?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the whole transcript. To drop one line, hover it and
+              click remove.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel size="sm">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              size="sm"
+              onClick={() => void onClear()}
+            >
+              Clear all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -186,6 +186,22 @@ impl Session {
         self.turns.clear();
     }
 
+    /// Drop one closed or in-progress turn from the transcript.
+    /// Capture and enrolled speakers stay.
+    pub fn remove_turn(&mut self, speaker: usize, start: f64) -> Option<Utterance> {
+        if let Some(turn) = remove_matching_turn(&mut self.turns, speaker, start) {
+            return Some(turn);
+        }
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|turn| turn_matches(turn, speaker, start))
+        {
+            return self.open.take();
+        }
+        None
+    }
+
     /// Save the current (or given) diarized speaker into the gallery.
     pub fn enroll_speaker(
         &mut self,
@@ -445,6 +461,21 @@ fn append_word(dst: &mut String, word: &str) {
     }
 }
 
+fn turn_matches(turn: &Utterance, speaker: usize, start: f64) -> bool {
+    turn.speaker == speaker && (turn.start - start).abs() < 1e-4
+}
+
+fn remove_matching_turn(
+    turns: &mut Vec<Utterance>,
+    speaker: usize,
+    start: f64,
+) -> Option<Utterance> {
+    let index = turns
+        .iter()
+        .position(|turn| turn_matches(turn, speaker, start))?;
+    Some(turns.remove(index))
+}
+
 fn group_turns(words: &[TimedToken], spans: &[Span]) -> Vec<Utterance> {
     let mut turns = Vec::new();
     let mut current: Option<Utterance> = None;
@@ -563,5 +594,25 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].speaker, 2);
         assert_eq!(turns[0].text, "Hello again");
+    }
+
+    fn turn(start: f64, speaker: usize, text: &str) -> Utterance {
+        Utterance {
+            start,
+            end: start + 0.4,
+            speaker,
+            name: None,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn removes_one_closed_turn_by_speaker_and_start() {
+        let mut turns = vec![turn(0.1, 0, "Hello"), turn(1.2, 1, "Hi")];
+        let removed = remove_matching_turn(&mut turns, 0, 0.1).expect("turn");
+        assert_eq!(removed.text, "Hello");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].text, "Hi");
+        assert!(remove_matching_turn(&mut turns, 0, 0.1).is_none());
     }
 }

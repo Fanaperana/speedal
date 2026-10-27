@@ -73,6 +73,10 @@ pub enum UiEvent {
         message: String,
     },
     Cleared,
+    TurnRemoved {
+        speaker: usize,
+        start: f64,
+    },
 }
 
 pub enum Cmd {
@@ -103,6 +107,11 @@ pub enum Cmd {
         reply: Sender<Result<EnrollDto>>,
     },
     Clear {
+        reply: Sender<Result<()>>,
+    },
+    RemoveTurn {
+        speaker: usize,
+        start: f64,
         reply: Sender<Result<()>>,
     },
 }
@@ -176,6 +185,13 @@ fn handle_cmd(app: &AppHandle, state: &mut State, cmd: Cmd) {
         }
         Cmd::Clear { reply } => {
             let _ = reply.send(clear(app, state));
+        }
+        Cmd::RemoveTurn {
+            speaker,
+            start,
+            reply,
+        } => {
+            let _ = reply.send(remove_turn(app, state, speaker, start));
         }
     }
 }
@@ -326,6 +342,14 @@ fn clear(app: &AppHandle, state: &mut State) -> Result<()> {
         session.reset();
     }
     emit(app, UiEvent::Cleared);
+    Ok(())
+}
+
+fn remove_turn(app: &AppHandle, state: &mut State, speaker: usize, start: f64) -> Result<()> {
+    if let Some(session) = &mut state.session {
+        session.remove_turn(speaker, start);
+    }
+    emit(app, UiEvent::TurnRemoved { speaker, start });
     Ok(())
 }
 

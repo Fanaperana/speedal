@@ -1,4 +1,4 @@
-import { AudioLinesIcon, FileAudioIcon } from "lucide-react"
+import { AudioLinesIcon, FileAudioIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -8,9 +8,13 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
   formatTime,
@@ -27,6 +31,7 @@ type TranscriptPaneProps = {
   hint?: string
   onListen: () => void
   onOpenFile: () => void
+  onRemove: (turn: Turn) => void
 }
 
 export function TranscriptPane({
@@ -37,12 +42,13 @@ export function TranscriptPane({
   hint,
   onListen,
   onOpenFile,
+  onRemove,
 }: TranscriptPaneProps) {
   const empty = turns.length === 0 && live === null
 
   if (empty) {
     return (
-      <div className="flex h-full items-start justify-center p-6">
+      <div className="flex h-full min-h-0 items-start justify-center overflow-hidden p-6">
         <Empty className="max-w-sm p-0">
           <EmptyHeader>
             <EmptyTitle>No transcript</EmptyTitle>
@@ -72,27 +78,42 @@ export function TranscriptPane({
   }
 
   return (
-    <ScrollArea className="h-full">
+    <div className="h-full min-h-0 overflow-y-auto overscroll-contain">
       <div className="flex flex-col px-2 py-1">
         {turns.map((turn, index) => (
           <TurnRow
             key={`${turn.speaker}-${turn.start}-${index}`}
             turn={turn}
+            onRemove={() => onRemove(turn)}
           />
         ))}
-        {live ? <TurnRow turn={live} live={listening} /> : null}
+        {live ? (
+          <TurnRow
+            turn={live}
+            live={listening}
+            onRemove={() => onRemove(live)}
+          />
+        ) : null}
       </div>
-    </ScrollArea>
+    </div>
   )
 }
 
-function TurnRow({ turn, live = false }: { turn: Turn; live?: boolean }) {
+function TurnRow({
+  turn,
+  live = false,
+  onRemove,
+}: {
+  turn: Turn
+  live?: boolean
+  onRemove?: () => void
+}) {
   const label = speakerLabel(turn.speaker, turn.name)
 
   return (
     <article
       className={cn(
-        "flex gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50",
+        "group flex gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50",
         live && "bg-muted/40"
       )}
     >
@@ -109,6 +130,25 @@ function TurnRow({ turn, live = false }: { turn: Turn; live?: boolean }) {
         </div>
         <p className="text-[13px] leading-snug text-pretty">{turn.text}</p>
       </div>
+      {onRemove ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="mt-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                aria-label={`Remove ${label}`}
+                onClick={onRemove}
+              />
+            }
+          >
+            <XIcon />
+            <span className="sr-only">Remove this turn</span>
+          </TooltipTrigger>
+          <TooltipContent>Remove this turn</TooltipContent>
+        </Tooltip>
+      ) : null}
     </article>
   )
 }

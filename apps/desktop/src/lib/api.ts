@@ -64,6 +64,7 @@ export type UiEvent =
   | { type: "rms"; value: number }
   | { type: "error"; message: string }
   | { type: "cleared" }
+  | { type: "turn_removed"; speaker: number; start: number }
 
 type TurnEvent = {
   type: "turn"
@@ -76,6 +77,13 @@ type TurnEvent = {
 
 export function speakerLabel(speaker: number, name: string | null | undefined) {
   return name?.trim() ? name : `speaker_${speaker}`
+}
+
+export function sameTurn(
+  left: { speaker: number; start: number },
+  right: { speaker: number; start: number }
+) {
+  return left.speaker === right.speaker && Math.abs(left.start - right.start) < 1e-4
 }
 
 export function formatTime(seconds: number) {
@@ -129,6 +137,10 @@ export async function enrollSpeaker(name: string, speaker?: number) {
 
 export async function clearTranscript() {
   return invoke<void>("clear_transcript")
+}
+
+export async function removeTurn(speaker: number, start: number) {
+  return invoke<void>("remove_turn", { speaker, start })
 }
 
 export async function pickWav() {
