@@ -59,9 +59,9 @@ import {
 
 const PROFILES: { value: Profile; label: string; hint: string }[] = [
   { value: "low", label: "Low", hint: "1.04s buffer · live default" },
-  { value: "very-low", label: "V.low", hint: "0.64s buffer" },
+  { value: "very-low", label: "Very low", hint: "0.64s buffer" },
   { value: "ultra", label: "Ultra", hint: "0.32s buffer" },
-  { value: "offline", label: "Off", hint: "30.4s buffer · files" },
+  { value: "offline", label: "Offline", hint: "30.4s buffer · files" },
 ]
 
 export function App() {
